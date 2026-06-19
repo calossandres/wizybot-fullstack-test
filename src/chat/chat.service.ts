@@ -21,7 +21,7 @@ export class ChatService {
         type: 'function',
         function: {
           name: 'searchProducts',
-          description: 'Search for products related to the user query. Returns 2 matching products.',
+          description: 'Search for products in the store. ALWAYS use this tool when the user is looking for a product, gift, or present.',
           parameters: {
             type: 'object',
             properties: {
@@ -54,7 +54,12 @@ export class ChatService {
     ]
 
     // Agentic loop: keep executing tools until LLM gives a final response
-    while (true) {
+    const MAX_ITERATIONS = 5
+    let iterations = 0
+
+    while (iterations < MAX_ITERATIONS) {
+      iterations++
+
       const response = await client.chat.completions.create({
         model: 'gpt-3.5-turbo',
         messages,
@@ -100,5 +105,7 @@ export class ChatService {
         })
       }
     }
+
+    return 'Unable to generate a response. Please try again.'
   }
 }

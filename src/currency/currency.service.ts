@@ -19,25 +19,29 @@ export class CurrencyService {
     from: string,
     to: string,
   ): Promise<string> {
-    const appId = this.configService.get<string>('OPEN_EXCHANGE_APP_ID')
+    try {
+      const appId = this.configService.get<string>('OPEN_EXCHANGE_APP_ID')
 
-    const response = await axios.get(
-      `https://openexchangerates.org/api/latest.json?app_id=${appId}&base=USD`,
-    )
+      const response = await axios.get(
+        `https://openexchangerates.org/api/latest.json?app_id=${appId}&base=USD`,
+      )
 
-    const rates = response.data.rates
+      const rates = response.data.rates
 
-    // Convert: amount in 'from' → USD → 'to'
-    const fromRate = rates[from.toUpperCase()]
-    const toRate = rates[to.toUpperCase()]
+      // Convert: amount in 'from' → USD → 'to'
+      const fromRate = rates[from.toUpperCase()]
+      const toRate = rates[to.toUpperCase()]
 
-    if (!fromRate || !toRate) {
-      return `Currency not found: ${from} or ${to}`
+      if (!fromRate || !toRate) {
+        return `Currency not found: ${from} or ${to}`
+      }
+
+      const amountInUsd = amount / fromRate
+      const result = amountInUsd * toRate
+
+      return `${amount} ${from.toUpperCase()} = ${result.toFixed(2)} ${to.toUpperCase()}`
+    } catch (error) {
+      return 'Error fetching exchange rates. Please try again.'
     }
-
-    const amountInUsd = amount / fromRate
-    const result = amountInUsd * toRate
-
-    return `${amount} ${from.toUpperCase()} = ${result.toFixed(2)} ${to.toUpperCase()}`
   }
 }
