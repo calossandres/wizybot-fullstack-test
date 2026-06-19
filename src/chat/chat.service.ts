@@ -1,10 +1,9 @@
-// /src/chat/chat.service.ts
+// src/chat/chat.service.ts
 
-import { Injectable } from "@nestjs/common"
-
-import { OpenAIService } from "../openai/openai.service"
-import { ProductsService } from "../products/products.service"
-import { CurrencyService } from "../currency/currency.service"
+import { Injectable } from '@nestjs/common'
+import { OpenAIService } from '../openai/openai.service'
+import { ProductsService } from '../products/products.service'
+import { CurrencyService } from '../currency/currency.service'
 
 @Injectable()
 export class ChatService {
@@ -14,10 +13,99 @@ export class ChatService {
     private readonly currencyService: CurrencyService,
   ) {}
 
-  async ask(
-    message: string,
-  ): Promise<string> {
+  async ask(message: string): Promise<string> {
+    const client = this.openAIService.getClient()
 
-    return `Received: ${message}`
+    // Tools available to the LLM
+    const tools: any[] = [
+      {
+        type: 'function',
+        function: {
+          name: 'searchProducts',
+          description: 'Search for products related to the user query. Returns 2 matching products.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'The search query to find relevant products',
+              },
+            },
+            required: ['query'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'convertCurrencies',
+          description: 'Convert an amount from one currency to another.',
+          parameters: {
+            type: 'object',
+            properties: {
+              amount: { type: 'number', description: 'Amount to convert' },
+              from: { type: 'string', description: 'Source currency code (e.g. USD)' },
+              to: { type: 'string', description: 'Target currency code (e.g. EUR)' },
+            },
+            required: ['amount', 'from', 'to'],
+          },
+        },
+      },
+    ]
+
+    const messages: any[] = [
+      { role: 'user', content: message },
+    ]
+
+    // First call: let LLM decide which tool to use
+    const firstResponse = await client.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages,
+      tools,
+      tool_choice: 'auto',
+    })
+
+    const firstChoice = firstResponse.choices[0].message
+
+    // If no tool was called, return direct response
+    if (!firstChoice.tool_calls || firstChoice.tool_calls.length === 0) {
+      return firstChoice.content ?? ''
+    }
+
+    // Execute the tool the LLM requested
+    const toolCall = firstChoice.tool_calls[0] as any
+    const toolName = toolCall.function.name
+    const toolArgs = JSON.parse(toolCall.function.arguments)
+    let toolResult: string
+
+    if (toolName === 'searchProducts') {
+      const products = this.productsService.searchProducts(toolArgs.query)
+      toolResult = JSON.stringify(products)
+    } else if (toolName === 'convertCurrencies') {
+      toolResult = await this.currencyService.convertCurrencies(
+        toolArgs.amount,
+        toolArgs.from,
+        toolArgs.to,
+      )
+    } else {
+      toolResult = 'Tool not found'
+    }
+
+    // Second call: send tool result back to LLM for final response
+    const secondResponse = await client.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        ...messages,
+        firstChoice,
+        {
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: toolResult,
+        },
+      ],
+      tools,
+    })
+
+    return secondResponse.choices[0].message.content ?? ''
   }
 }
