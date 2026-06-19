@@ -16,7 +16,6 @@ export class ChatService {
   async ask(message: string): Promise<string> {
     const client = this.openAIService.getClient()
 
-    // Tools available to the LLM
     const tools: any[] = [
       {
         type: 'function',
@@ -26,10 +25,7 @@ export class ChatService {
           parameters: {
             type: 'object',
             properties: {
-              query: {
-                type: 'string',
-                description: 'The search query to find relevant products',
-              },
+              query: { type: 'string', description: 'Search query' },
             },
             required: ['query'],
           },
@@ -57,55 +53,52 @@ export class ChatService {
       { role: 'user', content: message },
     ]
 
-    // First call: let LLM decide which tool to use
-    const firstResponse = await client.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages,
-      tools,
-      tool_choice: 'auto',
-    })
+    // Agentic loop: keep executing tools until LLM gives a final response
+    while (true) {
+      const response = await client.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages,
+        tools,
+        tool_choice: 'auto',
+      })
 
-    const firstChoice = firstResponse.choices[0].message
+      const choice = response.choices[0].message
 
-    // If no tool was called, return direct response
-    if (!firstChoice.tool_calls || firstChoice.tool_calls.length === 0) {
-      return firstChoice.content ?? ''
-    }
+      // Add assistant message to history
+      messages.push(choice)
 
-    // Execute the tool the LLM requested
-    const toolCall = firstChoice.tool_calls[0] as any
-    const toolName = toolCall.function.name
-    const toolArgs = JSON.parse(toolCall.function.arguments)
-    let toolResult: string
+      // If no tool calls, return final response
+      if (!choice.tool_calls || choice.tool_calls.length === 0) {
+        return choice.content ?? ''
+      }
 
-    if (toolName === 'searchProducts') {
-      const products = this.productsService.searchProducts(toolArgs.query)
-      toolResult = JSON.stringify(products)
-    } else if (toolName === 'convertCurrencies') {
-      toolResult = await this.currencyService.convertCurrencies(
-        toolArgs.amount,
-        toolArgs.from,
-        toolArgs.to,
-      )
-    } else {
-      toolResult = 'Tool not found'
-    }
+      // Execute ALL tool calls requested in this turn
+      for (const toolCall of choice.tool_calls) {
+        const toolName = (toolCall as any).function.name
+        const toolArgs = JSON.parse((toolCall as any).function.arguments)
 
-    // Second call: send tool result back to LLM for final response
-    const secondResponse = await client.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        ...messages,
-        firstChoice,
-        {
+        let toolResult: string
+
+        if (toolName === 'searchProducts') {
+          const products = this.productsService.searchProducts(toolArgs.query)
+          toolResult = JSON.stringify(products)
+        } else if (toolName === 'convertCurrencies') {
+          toolResult = await this.currencyService.convertCurrencies(
+            toolArgs.amount,
+            toolArgs.from,
+            toolArgs.to,
+          )
+        } else {
+          toolResult = 'Tool not found'
+        }
+
+        // Add each tool result to messages
+        messages.push({
           role: 'tool',
           tool_call_id: toolCall.id,
           content: toolResult,
-        },
-      ],
-      tools,
-    })
-
-    return secondResponse.choices[0].message.content ?? ''
+        })
+      }
+    }
   }
 }
